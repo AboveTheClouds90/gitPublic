@@ -192,6 +192,79 @@ After every config change:
 promtool check config /etc/prometheus/prometheus.yml && sudo systemctl reload prometheus
 ```
 
+### Servers behind HTTPS and/or an API key
+
+First check whether `/metrics` needs the key at all. Try without it, then with it:
+
+```bash
+curl -s  https://<llm-server>/metrics | head
+curl -s -H "Authorization: Bearer <api-key>" https://<llm-server>/metrics | head
+```
+
+- **llama.cpp** with `--api-key`: `/metrics` needs the key as well.
+- **vLLM** with `--api-key`: the key only protects the `/v1/...` routes, so `/metrics`
+  usually answers without it. Check with the first `curl`.
+- If the first `curl` already returns metrics, you only need `scheme: https`.
+
+**1. Store each key in a file that only Prometheus can read.** It stays out of the
+config file and out of your shell history:
+
+```bash
+sudo install -d -m 750 -o root -g prometheus /etc/prometheus/secrets
+sudo nano /etc/prometheus/secrets/llm-server-1.key     # paste only the key, save
+sudo chown root:prometheus /etc/prometheus/secrets/*.key
+sudo chmod 640 /etc/prometheus/secrets/*.key
+```
+
+**2. Add `scheme`, `authorization` and, if needed, `tls_config` to the job.** The key is
+set per job, so a server with its own key needs its own job. Servers that share a key
+can stay together in one job.
+
+```yaml
+  - job_name: llamacpp-server-1
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/llm-server-1.key
+    static_configs:
+      - targets: ["llm1.example.com"]          # no port = 443 for https
+        labels: { server: llm-server-1, model: glm-5.3 }
+
+  - job_name: vllm-host-1
+    scheme: https
+    metrics_path: /metrics
+    # authorization: only if the curl test above needed the key
+    static_configs:
+      - targets: ["vllm1.example.com:8443"]
+        labels: { server: vllm-host-1 }
+```
+
+Use the same `server` labels as before and your Grafana queries keep working. If the
+dashboard filters on `job`, use a regex like `job=~"llamacpp.*"`.
+
+**3. Certificate.** A normal certificate (e.g. Let's Encrypt) needs nothing extra. For a
+**self-signed** certificate or one from your own CA, copy the CA certificate (`.crt`/`.pem`)
+to the VM and point the job at it:
+
+```yaml
+    tls_config:
+      ca_file: /etc/prometheus/secrets/my-ca.crt
+      # server_name: llm1.example.com   # if you connect by IP but the cert has a hostname
+```
+
+`insecure_skip_verify: true` also works, but it turns off certificate checking. Use it only
+for a quick test.
+
+**4. Apply and check** `http://<vm-ip>:9090/targets`. Common errors:
+
+| Error on the targets page | Meaning |
+|---------------------------|---------|
+| `401 Unauthorized`        | wrong or missing key, or the key file isn't readable by the `prometheus` user |
+| `x509: certificate signed by unknown authority` | self-signed cert: add `tls_config.ca_file` |
+| `x509: certificate is valid for X, not Y` | set `tls_config.server_name`, or use the hostname from the cert |
+| `server gave HTTP response to HTTPS client` | the server is plain HTTP: remove `scheme: https` |
+
 ## 5. Check it
 
 ```bash
