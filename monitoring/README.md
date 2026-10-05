@@ -1,6 +1,7 @@
 # Prometheus + Grafana monitoring (native install, Ubuntu/Debian)
 
-Installs everything with `apt`, running as systemd services. No Docker. Monitors:
+Installs everything with `apt`, running as systemd services. No Docker, no git clone:
+**every step is a block you paste into the VM's terminal.** Monitors:
 
 - **the VM itself** (CPU, RAM, disk, network) using node-exporter
 - **one or more llama.cpp `llama-server`s** (e.g. GLM-5.3, see [../llamaCppInstr.md](../llamaCppInstr.md))
@@ -12,48 +13,104 @@ Installs everything with `apt`, running as systemd services. No Docker. Monitors
 | node-exporter | `prometheus-node-exporter`  | `prometheus-node-exporter` | 9100 |
 | Grafana       | `grafana` (Grafana apt repo)| `grafana-server`           | 3000 |
 
-```
-monitoring/
-├── prometheus/prometheus.yml                         -> /etc/prometheus/prometheus.yml
-└── grafana/provisioning/datasources/prometheus.yml   -> /etc/grafana/provisioning/datasources/
-```
+> **How to paste a file:** the blocks below that start with `sudo tee ... <<'EOF'` write a
+> whole file in one go. Paste the entire block, from the first line through `EOF`.
+> Prefer nano? Run `sudo nano <path>`, paste only the file contents (the part between the
+> `tee` line and `EOF`), then save with `Ctrl+O`, `Enter` and exit with `Ctrl+X`.
+>
+> The config files are also in this folder as plain files
+> ([prometheus/prometheus.yml](prometheus/prometheus.yml),
+> [grafana/provisioning/datasources/prometheus.yml](grafana/provisioning/datasources/prometheus.yml)).
 
-## 1. Get the files
+## 1. Install Prometheus + node-exporter
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git curl
-git clone https://github.com/AboveTheClouds90/gitPublic.git
-cd gitPublic/monitoring
+sudo apt-get install -y prometheus prometheus-node-exporter curl
 ```
 
-## 2. Install Prometheus + node-exporter
-
-```bash
-sudo apt-get install -y prometheus prometheus-node-exporter
-```
-
-Both start automatically. Next, replace the default Prometheus config with the one from this repo.
-First edit `prometheus/prometheus.yml` and set your targets (see step 4).
-
-```bash
-sudo cp /etc/prometheus/prometheus.yml /etc/prometheus/prometheus.yml.orig
-sudo cp prometheus/prometheus.yml /etc/prometheus/prometheus.yml
-promtool check config /etc/prometheus/prometheus.yml
-sudo systemctl restart prometheus
-```
-
-Optional: keep 30 days of data (the default is 15). Edit `/etc/default/prometheus`:
-
-```bash
-ARGS="--storage.tsdb.retention.time=30d"
-```
-
-Then run `sudo systemctl restart prometheus`.
+Both start automatically.
 
 > Ubuntu's `prometheus` package is often a few versions behind upstream. That's fine
 > for this setup. If you need the latest version, use the official binaries from
 > https://prometheus.io/download/ instead.
+
+## 2. Write the Prometheus config
+
+Back up the default config:
+
+```bash
+sudo cp /etc/prometheus/prometheus.yml /etc/prometheus/prometheus.yml.orig
+```
+
+**Before pasting**, copy the block into a text editor and replace the `<...>` placeholders
+with your servers' IPs or hostnames. Delete the entries you don't need. You can also paste
+it as-is and fix it afterwards with `sudo nano /etc/prometheus/prometheus.yml`.
+
+```bash
+sudo tee /etc/prometheus/prometheus.yml > /dev/null <<'EOF'
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Machine stats (CPU, RAM, disk, network), from prometheus-node-exporter.
+  # Install prometheus-node-exporter on each LLM server too and list them here.
+  - job_name: node
+    static_configs:
+      - targets: ["localhost:9100"]
+        labels:
+          server: monitoring-vm
+      - targets: ["<llm-server-1>:9100"]
+        labels:
+          server: llm-server-1
+      - targets: ["<llm-server-2>:9100"]
+        labels:
+          server: llm-server-2
+
+  # llama.cpp llama-server instances, each started with --metrics.
+  # One entry per server; add or remove blocks as needed.
+  - job_name: llamacpp
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["<llm-server-1>:8080"]
+        labels:
+          server: llm-server-1
+          model: glm-5.3
+      - targets: ["<llm-server-2>:8080"]
+        labels:
+          server: llm-server-2
+          model: <model-name>
+
+  # vLLM instances; /metrics is on by default on the API port.
+  - job_name: vllm
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["<vllm-host-1>:8000"]
+        labels:
+          server: vllm-host-1
+      - targets: ["<vllm-host-2>:8000"]
+        labels:
+          server: vllm-host-2
+EOF
+```
+
+YAML is picky about indentation. Use spaces, never tabs. Check and apply:
+
+```bash
+promtool check config /etc/prometheus/prometheus.yml && sudo systemctl restart prometheus
+```
+
+Optional: keep 30 days of data (the default is 15):
+
+```bash
+sudo sed -i 's|^ARGS=.*|ARGS="--storage.tsdb.retention.time=30d"|' /etc/default/prometheus
+sudo systemctl restart prometheus
+```
 
 ## 3. Install Grafana (official apt repo)
 
@@ -66,17 +123,31 @@ sudo apt-get update
 sudo apt-get install -y grafana
 ```
 
-Add Prometheus as a data source automatically, then start Grafana:
+Add Prometheus as a data source automatically:
 
 ```bash
-sudo cp grafana/provisioning/datasources/prometheus.yml /etc/grafana/provisioning/datasources/
+sudo tee /etc/grafana/provisioning/datasources/prometheus.yml > /dev/null <<'EOF'
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://localhost:9090
+    isDefault: true
+EOF
+```
+
+Start Grafana:
+
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now grafana-server
 ```
 
-## 4. Turn on metrics in the model servers and set targets
+## 4. Turn on metrics in the model servers
 
-**llama.cpp:** add `--metrics` to the `llama-server` command:
+**llama.cpp:** add `--metrics` to every `llama-server` command:
 
 ```bash
 ./llama.cpp/build/bin/llama-server \
@@ -89,15 +160,12 @@ sudo systemctl enable --now grafana-server
 
 **vLLM:** `/metrics` is on by default on the API port.
 
-Check both:
+From the monitoring VM, check that each server answers:
 
 ```bash
-curl -s http://localhost:8080/metrics | head
-curl -s http://<vllm-host>:8000/metrics | head
+curl -s http://<llm-server-1>:8080/metrics | head
+curl -s http://<vllm-host-1>:8000/metrics | head
 ```
-
-In `/etc/prometheus/prometheus.yml`, replace the `<...>` placeholders with your servers'
-IPs or hostnames. Delete any entries you don't need.
 
 ### Multiple LLM servers
 
