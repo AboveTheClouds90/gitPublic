@@ -91,14 +91,41 @@ sudo systemctl restart prometheus
 
 ## 3. Install Grafana (official apt repo)
 
+Grafana isn't in Ubuntu's own repos, so apt first has to trust Grafana's signing key and
+know where Grafana's package repo is. Paste these one block at a time.
+
+Tools needed for the key download:
+
 ```bash
-sudo apt-get install -y apt-transport-https software-properties-common wget gpg
+sudo apt-get update
+sudo apt-get install -y wget gpg ca-certificates
+```
+
+Download Grafana's key and convert it for apt (the last line should list the file):
+
+```bash
 sudo mkdir -p /etc/apt/keyrings
-wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/grafana.gpg > /dev/null
+wget -O /tmp/grafana.key https://apt.grafana.com/gpg.key
+sudo gpg --dearmor -o /etc/apt/keyrings/grafana.gpg /tmp/grafana.key
+ls -l /etc/apt/keyrings/grafana.gpg
+```
+
+Add the Grafana repo and install:
+
+```bash
 echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
 sudo apt-get update
 sudo apt-get install -y grafana
 ```
+
+If the `wget` step fails:
+
+| Message | Cause |
+|---------|-------|
+| `wget: command not found` | the tools step didn't run or failed. Check its output |
+| `unable to resolve host address` | no DNS or internet. Test with `ping -c 3 8.8.8.8` and `ping -c 3 google.com` |
+| `Connection timed out` | a firewall or proxy blocks outgoing HTTPS. Behind a proxy: `export https_proxy=http://<proxy>:<port>` |
+| `certificate verification failed` | `ca-certificates` missing, or a proxy intercepts HTTPS |
 
 Add Prometheus as a data source automatically:
 
