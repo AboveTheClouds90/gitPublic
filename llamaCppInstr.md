@@ -24,6 +24,7 @@ ls ~/models/GLM-5.3/UD-Q4_K_XL/
 # 5. Start the server
 ./llama.cpp/build/bin/llama-server \
   -m ~/models/GLM-5.3/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00001-of-0000X.gguf \
+  --alias glm-5.3 --metrics \
   -t 48 -c 32768 -b 2048 -ub 2048 \
   --no-mmap --jinja \
   --host 0.0.0.0 --port 8080

@@ -5,8 +5,8 @@ Installs Prometheus and Grafana with `apt`, running as systemd services. No Dock
 
 It collects the stats that the LLM servers report on their own `/metrics` address:
 
-- **one or more llama.cpp `llama-server`s** (e.g. GLM-5.3, see [../llamaCppInstr.md](../llamaCppInstr.md))
-- **one or more vLLM servers**
+- **the GLM-5.3 llama.cpp `llama-server`** on this machine (`localhost:8080`, see [../llamaCppInstr.md](../llamaCppInstr.md))
+- optionally more llama.cpp servers and **vLLM servers** (HTTPS + API key)
 
 These are numbers over time (tokens/s, requests, cache use, latency), not logs.
 Machine stats (CPU, RAM, disk) are not collected. For those, you would add node-exporter on each server.
@@ -47,21 +47,9 @@ Back up the default config:
 sudo cp /etc/prometheus/prometheus.yml /etc/prometheus/prometheus.yml.orig
 ```
 
-The vLLM servers use HTTPS and an API key. Store each vLLM server's key in its own
-file that only Prometheus can read. This keeps keys out of the config file and out of your
-shell history:
-
-```bash
-sudo install -d -m 750 -o root -g prometheus /etc/prometheus/secrets
-sudo nano /etc/prometheus/secrets/vllm-host-1.key     # paste only the key, save
-sudo nano /etc/prometheus/secrets/vllm-host-2.key     # one file per vLLM server
-sudo chown root:prometheus /etc/prometheus/secrets/*.key
-sudo chmod 640 /etc/prometheus/secrets/*.key
-```
-
-**Before pasting the config**, copy the block into a text editor and replace the `<...>`
-placeholders with your servers' IPs or hostnames. Delete the entries you don't need. You can
-also paste it as-is and fix it afterwards with `sudo nano /etc/prometheus/prometheus.yml`.
+This config is ready to paste as-is. It scrapes the GLM-5.3 `llama-server` from
+[../llamaCppInstr.md](../llamaCppInstr.md), running **on this same machine** on port `8080`.
+To add vLLM servers, see [Add vLLM servers](#add-vllm-servers-https--api-key) further down.
 
 ```bash
 sudo tee /etc/prometheus/prometheus.yml > /dev/null <<'EOF'
@@ -74,46 +62,19 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # llama.cpp llama-server instances, each started with --metrics.
-  # One entry per server; add or remove blocks as needed.
+  # llama.cpp llama-server (GLM-5.3) on this machine, started with --metrics
   - job_name: llamacpp
     metrics_path: /metrics
     static_configs:
-      - targets: ["<llm-server-1>:8080"]
+      - targets: ["localhost:8080"]
         labels:
-          server: llm-server-1
+          server: local
           model: glm-5.3
-      - targets: ["<llm-server-2>:8080"]
-        labels:
-          server: llm-server-2
-          model: <model-name>
-
-  # vLLM servers over HTTPS with an API key.
-  # The key is set per job, so each server with its own key gets its own job.
-  # Servers that share a key can be listed together in one job.
-  - job_name: vllm-host-1
-    scheme: https
-    metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials_file: /etc/prometheus/secrets/vllm-host-1.key
-    static_configs:
-      - targets: ["<vllm-host-1>:<https-port>"]   # without :port, 443 is used
-        labels:
-          server: vllm-host-1
-
-  - job_name: vllm-host-2
-    scheme: https
-    metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials_file: /etc/prometheus/secrets/vllm-host-2.key
-    static_configs:
-      - targets: ["<vllm-host-2>:<https-port>"]
-        labels:
-          server: vllm-host-2
 EOF
 ```
+
+> If Prometheus runs on a **different** machine than llama-server, replace `localhost:8080`
+> with `<llama-server-ip>:8080`.
 
 YAML is picky about indentation. Use spaces, never tabs. Check and apply:
 
@@ -161,9 +122,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now grafana-server
 ```
 
-## 4. Turn on metrics in the model servers
+## 4. Turn on metrics in llama-server
 
-**llama.cpp:** add `--metrics` to every `llama-server` command:
+llama-server only serves `/metrics` when it's started with `--metrics`. Restart it like this
+(this is the command from [../llamaCppInstr.md](../llamaCppInstr.md) plus `--alias` and `--metrics`):
 
 ```bash
 ./llama.cpp/build/bin/llama-server \
@@ -174,20 +136,15 @@ sudo systemctl enable --now grafana-server
   --host 0.0.0.0 --port 8080
 ```
 
-**vLLM:** `/metrics` is on by default on the API port.
-
-From the monitoring VM, check that each server answers:
+Check that it answers. You should see lines starting with `llamacpp:`:
 
 ```bash
-curl -s http://<llm-server-1>:8080/metrics | head
-curl -s -H "Authorization: Bearer <api-key>" https://<vllm-host-1>:<https-port>/metrics | head
+curl -s http://localhost:8080/metrics | head
 ```
 
-For the vLLM servers, see [vLLM servers: HTTPS and API key](#vllm-servers-https-and-api-key) if this fails.
+### More llama.cpp servers
 
-### Multiple LLM servers
-
-**llama.cpp:** all servers go into the one `llamacpp` job, one entry each, with a
+All llama.cpp servers go into the one `llamacpp` job, one entry each, with a
 `server` label so you can tell them apart:
 
 ```yaml
@@ -202,14 +159,10 @@ For the vLLM servers, see [vLLM servers: HTTPS and API key](#vllm-servers-https-
 
 - If one machine runs several llama-servers on different ports, add one entry per port
   (`10.0.0.11:8080`, `10.0.0.11:8081`, ...).
-- **vLLM:** copy a `vllm-host-N` job for each extra server, with its own key file and
-  `server` label (see step 2). Servers that share a key can go in one job as extra
-  `targets` entries.
-- **Firewall on each LLM server:** let the monitoring VM reach the port, and only the VM:
+- **Firewall on each remote llama.cpp server:** let the monitoring VM reach the port, and only the VM:
 
   ```bash
-  sudo ufw allow from <monitoring-vm-ip> to any port 8080 proto tcp           # llama.cpp
-  sudo ufw allow from <monitoring-vm-ip> to any port <https-port> proto tcp   # vLLM
+  sudo ufw allow from <monitoring-vm-ip> to any port 8080 proto tcp
   ```
 
   If you also use these servers from OpenCode on other machines, allow those IPs as well.
@@ -223,10 +176,45 @@ After every config change:
 promtool check config /etc/prometheus/prometheus.yml && sudo systemctl reload prometheus
 ```
 
-### vLLM servers: HTTPS and API key
+### Add vLLM servers (HTTPS + API key)
 
-The `vllm-host-N` jobs in step 2 already use HTTPS and the key file. If a target isn't
-**UP**, check these:
+**1. Store each vLLM server's key** in its own file that only Prometheus can read. This
+keeps keys out of the config file and out of your shell history:
+
+```bash
+sudo install -d -m 750 -o root -g prometheus /etc/prometheus/secrets
+sudo nano /etc/prometheus/secrets/vllm-host-1.key     # paste only the key, save
+sudo chown root:prometheus /etc/prometheus/secrets/*.key
+sudo chmod 640 /etc/prometheus/secrets/*.key
+```
+
+**2. Append a job per vLLM server** to the config. Replace `<vllm-host-1>` and `<https-port>`
+first (without a port, 443 is used). The key is set per job, so each server with its own key
+gets its own job. `tee -a` adds to the end of the file instead of overwriting it:
+
+```bash
+sudo tee -a /etc/prometheus/prometheus.yml > /dev/null <<'EOF'
+
+  # vLLM server over HTTPS with an API key
+  - job_name: vllm-host-1
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/vllm-host-1.key
+    static_configs:
+      - targets: ["<vllm-host-1>:<https-port>"]
+        labels:
+          server: vllm-host-1
+EOF
+promtool check config /etc/prometheus/prometheus.yml && sudo systemctl reload prometheus
+```
+
+For a second server, repeat both steps with `vllm-host-2`. On each vLLM server, allow the
+monitoring VM through the firewall:
+`sudo ufw allow from <monitoring-vm-ip> to any port <https-port> proto tcp`.
+
+**If a vLLM target isn't UP**, check these:
 
 **Does `/metrics` need the key at all?** vLLM's own `--api-key` usually only protects the
 `/v1/...` routes, so `/metrics` often answers without a key. A reverse proxy in front of

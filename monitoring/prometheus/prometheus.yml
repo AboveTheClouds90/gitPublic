@@ -7,41 +7,11 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # llama.cpp llama-server instances, each started with --metrics.
-  # One entry per server; add or remove blocks as needed.
+  # llama.cpp llama-server (GLM-5.3) on this machine, started with --metrics
   - job_name: llamacpp
     metrics_path: /metrics
     static_configs:
-      - targets: ["<llm-server-1>:8080"]
+      - targets: ["localhost:8080"]
         labels:
-          server: llm-server-1
+          server: local
           model: glm-5.3
-      - targets: ["<llm-server-2>:8080"]
-        labels:
-          server: llm-server-2
-          model: <model-name>
-
-  # vLLM servers over HTTPS with an API key.
-  # The key is set per job, so each server with its own key gets its own job.
-  # Servers that share a key can be listed together in one job.
-  - job_name: vllm-host-1
-    scheme: https
-    metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials_file: /etc/prometheus/secrets/vllm-host-1.key
-    static_configs:
-      - targets: ["<vllm-host-1>:<https-port>"]   # without :port, 443 is used
-        labels:
-          server: vllm-host-1
-
-  - job_name: vllm-host-2
-    scheme: https
-    metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials_file: /etc/prometheus/secrets/vllm-host-2.key
-    static_configs:
-      - targets: ["<vllm-host-2>:<https-port>"]
-        labels:
-          server: vllm-host-2
