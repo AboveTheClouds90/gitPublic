@@ -7,22 +7,41 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # The VM itself (CPU, RAM, disk, network), from prometheus-node-exporter
+  # Machine stats (CPU, RAM, disk, network), from prometheus-node-exporter.
+  # Install prometheus-node-exporter on each LLM server too and list them here.
   - job_name: node
     static_configs:
       - targets: ["localhost:9100"]
+        labels:
+          server: monitoring-vm
+      - targets: ["<llm-server-1>:9100"]
+        labels:
+          server: llm-server-1
+      - targets: ["<llm-server-2>:9100"]
+        labels:
+          server: llm-server-2
 
-  # llama.cpp llama-server, needs to be started with --metrics.
-  # Use the server's IP instead of localhost if it runs on another machine.
+  # llama.cpp llama-server instances, each started with --metrics.
+  # One entry per server; add or remove blocks as needed.
   - job_name: llamacpp
     metrics_path: /metrics
     static_configs:
-      - targets: ["localhost:8080"]
+      - targets: ["<llm-server-1>:8080"]
         labels:
+          server: llm-server-1
           model: glm-5.3
+      - targets: ["<llm-server-2>:8080"]
+        labels:
+          server: llm-server-2
+          model: <model-name>
 
-  # vLLM exposes /metrics by default on its API port.
+  # vLLM instances; /metrics is on by default on the API port.
   - job_name: vllm
     metrics_path: /metrics
     static_configs:
-      - targets: ["<vllm-host>:8000"]
+      - targets: ["<vllm-host-1>:8000"]
+        labels:
+          server: vllm-host-1
+      - targets: ["<vllm-host-2>:8000"]
+        labels:
+          server: vllm-host-2

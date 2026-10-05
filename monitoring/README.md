@@ -3,8 +3,8 @@
 Installs everything with `apt`, running as systemd services. No Docker. Monitors:
 
 - **the VM itself** (CPU, RAM, disk, network) using node-exporter
-- **llama.cpp `llama-server`** (GLM-5.3, see [../llamaCppInstr.md](../llamaCppInstr.md))
-- **vLLM** on another server
+- **one or more llama.cpp `llama-server`s** (e.g. GLM-5.3, see [../llamaCppInstr.md](../llamaCppInstr.md))
+- **one or more vLLM servers**
 
 | Service       | apt package                 | systemd unit               | Port |
 |---------------|-----------------------------|----------------------------|------|
@@ -96,10 +96,38 @@ curl -s http://localhost:8080/metrics | head
 curl -s http://<vllm-host>:8000/metrics | head
 ```
 
-In `/etc/prometheus/prometheus.yml`:
+In `/etc/prometheus/prometheus.yml`, replace the `<...>` placeholders with your servers'
+IPs or hostnames. Delete any entries you don't need.
 
-- `llamacpp`: `localhost:8080` assumes llama-server runs on this VM. If not, use its IP.
-- `vllm`: replace `<vllm-host>` with the vLLM server's IP or hostname.
+### Multiple LLM servers
+
+Each server is one entry under the matching job (`llamacpp`, `vllm` or `node`), with a
+`server` label so you can tell them apart:
+
+```yaml
+  - job_name: llamacpp
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["10.0.0.11:8080"]
+        labels: { server: gpu-box-1, model: glm-5.3 }
+      - targets: ["10.0.0.12:8080"]
+        labels: { server: gpu-box-2, model: qwen3-coder }
+```
+
+- If one machine runs several llama-servers on different ports, add one entry per port
+  (`10.0.0.11:8080`, `10.0.0.11:8081`, ...).
+- For CPU, RAM and disk stats of each LLM server, install the exporter **on that server**
+  with `sudo apt-get install -y prometheus-node-exporter` and add it under the `node` job.
+- **Firewall on each LLM server:** let the monitoring VM reach the ports, and only the VM:
+
+  ```bash
+  sudo ufw allow from <monitoring-vm-ip> to any port 8080,9100 proto tcp   # llama.cpp
+  sudo ufw allow from <monitoring-vm-ip> to any port 8000,9100 proto tcp   # vLLM
+  ```
+
+- In Grafana, split charts by server with `by (server)`, for example
+  `sum by (server) (llamacpp:requests_processing)`. You can also add a dashboard variable
+  with the query `label_values(server)` to get a server dropdown.
 
 After every config change:
 
@@ -157,8 +185,8 @@ through `localhost`. To open the Prometheus UI, use an SSH tunnel:
 ssh -L 9090:localhost:9090 user@<vm-ip>    # then open http://localhost:9090
 ```
 
-If vLLM runs on another machine, its port 8000 must be reachable **from this VM**.
-On the vLLM server, allow it from the VM's IP only.
+The LLM servers' ports (8080, 8000, 9100) must be reachable **from this VM**, and only
+from it. See "Multiple LLM servers" above.
 
 ## Useful commands
 
