@@ -101,12 +101,36 @@ sudo apt-get update
 sudo apt-get install -y wget gpg ca-certificates
 ```
 
-Download Grafana's key and convert it for apt (the last line should list the file):
+Enter your sudo password **now**, so no password prompt hides in the middle of a later
+command. Run this alone and type your password if asked:
+
+```bash
+sudo -v
+```
+
+Download Grafana's key. It's a 2.5 KB file and should take **under a second**. `--timeout`
+and `--tries` make it fail after about 20 seconds instead of hanging silently:
+
+```bash
+wget --timeout=10 --tries=2 -O /tmp/grafana.key https://apt.grafana.com/gpg.key
+```
+
+The last line should say `'/tmp/grafana.key' saved`. Check that the file really is the key:
+
+```bash
+ls -l /tmp/grafana.key        # size should be about 2460 bytes, not 0
+head -n 1 /tmp/grafana.key    # must print: -----BEGIN PGP PUBLIC KEY BLOCK-----
+```
+
+If the size is 0, or the first line is anything else (e.g. `<html>` or `<!DOCTYPE`), the
+download failed and the next step will error with **`gpg: no valid OpenPGP data found`**. Go to
+[Grafana download fails](#grafana-download-fails) below.
+
+If the file is OK, convert the key for apt (the last line should list the file):
 
 ```bash
 sudo mkdir -p /etc/apt/keyrings
-wget -O /tmp/grafana.key https://apt.grafana.com/gpg.key
-sudo gpg --dearmor -o /etc/apt/keyrings/grafana.gpg /tmp/grafana.key
+sudo gpg --dearmor --yes -o /etc/apt/keyrings/grafana.gpg /tmp/grafana.key
 ls -l /etc/apt/keyrings/grafana.gpg
 ```
 
@@ -118,14 +142,63 @@ sudo apt-get update
 sudo apt-get install -y grafana
 ```
 
-If the `wget` step fails:
+### Grafana download fails
 
-| Message | Cause |
-|---------|-------|
-| `wget: command not found` | the tools step didn't run or failed. Check its output |
-| `unable to resolve host address` | no DNS or internet. Test with `ping -c 3 8.8.8.8` and `ping -c 3 google.com` |
-| `Connection timed out` | a firewall or proxy blocks outgoing HTTPS. Behind a proxy: `export https_proxy=http://<proxy>:<port>` |
-| `certificate verification failed` | `ca-certificates` missing, or a proxy intercepts HTTPS |
+Symptoms: `wget` hangs or prints nothing, `/tmp/grafana.key` is 0 bytes or HTML, or
+`gpg: no valid OpenPGP data found`.
+
+First look at what was actually downloaded:
+
+```bash
+ls -l /tmp/grafana.key
+head -c 300 /tmp/grafana.key; echo
+```
+
+- **0 bytes:** the connection failed. Run the test block below.
+- **HTML** (`<html>`, `Access denied`, a login page): a proxy or firewall answered instead of
+  Grafana. You need the proxy settings (below), or ask your network admin to allow
+  `apt.grafana.com`.
+
+Then paste this whole block. It tests each part of the connection separately, with a
+10-second limit per test, so nothing hangs:
+
+```bash
+echo "== DNS";        getent hosts apt.grafana.com || echo "DNS FAILED"
+echo "== Internet";   wget -q --spider --timeout=10 --tries=1 http://deb.debian.org && echo OK || echo "plain HTTP FAILED"
+echo "== HTTPS IPv4"; wget -4 -q --spider --timeout=10 --tries=1 https://apt.grafana.com/gpg.key && echo OK || echo "IPv4 HTTPS FAILED"
+echo "== HTTPS IPv6"; wget -6 -q --spider --timeout=10 --tries=1 https://apt.grafana.com/gpg.key && echo OK || echo "IPv6 HTTPS FAILED"
+echo "== Proxy vars"; env | grep -i _proxy || echo "none set"
+```
+
+| Result | Cause | Fix |
+|--------|-------|-----|
+| `DNS FAILED` | the VM can't resolve hostnames | fix DNS (e.g. `nameserver 1.1.1.1` in the VM's network config), or ask the VM's admin |
+| Internet OK, **both** HTTPS FAILED | outgoing HTTPS (port 443) is blocked: firewall, cloud security group, or a required proxy | allow outbound 443, or set the proxy (below) |
+| IPv4 OK, IPv6 FAILED | broken IPv6. wget and apt try IPv6 first and wait | use IPv4 (below) |
+| Everything FAILED | the VM has no internet access | check the VM's network/NAT settings |
+| Everything OK | network is fine. The earlier hang was probably a hidden `sudo` password prompt | run `sudo -v`, then repeat the download |
+
+**Use IPv4 only** (wget and apt):
+
+```bash
+wget -4 --timeout=10 --tries=2 -O /tmp/grafana.key https://apt.grafana.com/gpg.key
+echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+```
+
+**Behind a proxy** (ask your network admin for the address):
+
+```bash
+export https_proxy=http://<proxy>:<port> http_proxy=http://<proxy>:<port>
+echo 'Acquire::https::Proxy "http://<proxy>:<port>";' | sudo tee /etc/apt/apt.conf.d/95proxy
+```
+
+**No way out to apt.grafana.com at all?** Download the `.deb` on a machine that has
+internet (https://grafana.com/grafana/download → Linux → Ubuntu and Debian), copy it to the
+VM with `scp grafana_*.deb user@<vm-ip>:~/`, then on the VM run:
+
+```bash
+sudo apt-get install -y ~/grafana_*.deb
+```
 
 Add Prometheus as a data source automatically:
 
