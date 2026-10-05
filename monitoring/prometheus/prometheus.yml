@@ -21,13 +21,27 @@ scrape_configs:
           server: llm-server-2
           model: <model-name>
 
-  # vLLM instances; /metrics is on by default on the API port.
-  - job_name: vllm
+  # vLLM servers over HTTPS with an API key.
+  # The key is set per job, so each server with its own key gets its own job.
+  # Servers that share a key can be listed together in one job.
+  - job_name: vllm-host-1
+    scheme: https
     metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/vllm-host-1.key
     static_configs:
-      - targets: ["<vllm-host-1>:8000"]
+      - targets: ["<vllm-host-1>:<https-port>"]   # without :port, 443 is used
         labels:
           server: vllm-host-1
-      - targets: ["<vllm-host-2>:8000"]
+
+  - job_name: vllm-host-2
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/vllm-host-2.key
+    static_configs:
+      - targets: ["<vllm-host-2>:<https-port>"]
         labels:
           server: vllm-host-2

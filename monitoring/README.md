@@ -47,9 +47,21 @@ Back up the default config:
 sudo cp /etc/prometheus/prometheus.yml /etc/prometheus/prometheus.yml.orig
 ```
 
-**Before pasting**, copy the block into a text editor and replace the `<...>` placeholders
-with your servers' IPs or hostnames. Delete the entries you don't need. You can also paste
-it as-is and fix it afterwards with `sudo nano /etc/prometheus/prometheus.yml`.
+The vLLM servers use HTTPS and an API key. Store each vLLM server's key in its own
+file that only Prometheus can read. This keeps keys out of the config file and out of your
+shell history:
+
+```bash
+sudo install -d -m 750 -o root -g prometheus /etc/prometheus/secrets
+sudo nano /etc/prometheus/secrets/vllm-host-1.key     # paste only the key, save
+sudo nano /etc/prometheus/secrets/vllm-host-2.key     # one file per vLLM server
+sudo chown root:prometheus /etc/prometheus/secrets/*.key
+sudo chmod 640 /etc/prometheus/secrets/*.key
+```
+
+**Before pasting the config**, copy the block into a text editor and replace the `<...>`
+placeholders with your servers' IPs or hostnames. Delete the entries you don't need. You can
+also paste it as-is and fix it afterwards with `sudo nano /etc/prometheus/prometheus.yml`.
 
 ```bash
 sudo tee /etc/prometheus/prometheus.yml > /dev/null <<'EOF'
@@ -76,14 +88,28 @@ scrape_configs:
           server: llm-server-2
           model: <model-name>
 
-  # vLLM instances; /metrics is on by default on the API port.
-  - job_name: vllm
+  # vLLM servers over HTTPS with an API key.
+  # The key is set per job, so each server with its own key gets its own job.
+  # Servers that share a key can be listed together in one job.
+  - job_name: vllm-host-1
+    scheme: https
     metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/vllm-host-1.key
     static_configs:
-      - targets: ["<vllm-host-1>:8000"]
+      - targets: ["<vllm-host-1>:<https-port>"]   # without :port, 443 is used
         labels:
           server: vllm-host-1
-      - targets: ["<vllm-host-2>:8000"]
+
+  - job_name: vllm-host-2
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/vllm-host-2.key
+    static_configs:
+      - targets: ["<vllm-host-2>:<https-port>"]
         labels:
           server: vllm-host-2
 EOF
@@ -154,12 +180,14 @@ From the monitoring VM, check that each server answers:
 
 ```bash
 curl -s http://<llm-server-1>:8080/metrics | head
-curl -s http://<vllm-host-1>:8000/metrics | head
+curl -s -H "Authorization: Bearer <api-key>" https://<vllm-host-1>:<https-port>/metrics | head
 ```
+
+For the vLLM servers, see [vLLM servers: HTTPS and API key](#vllm-servers-https-and-api-key) if this fails.
 
 ### Multiple LLM servers
 
-Each server is one entry under the matching job (`llamacpp` or `vllm`), with a
+**llama.cpp:** all servers go into the one `llamacpp` job, one entry each, with a
 `server` label so you can tell them apart:
 
 ```yaml
@@ -174,11 +202,14 @@ Each server is one entry under the matching job (`llamacpp` or `vllm`), with a
 
 - If one machine runs several llama-servers on different ports, add one entry per port
   (`10.0.0.11:8080`, `10.0.0.11:8081`, ...).
-- **Firewall on each LLM server:** let the monitoring VM reach the API port, and only the VM:
+- **vLLM:** copy a `vllm-host-N` job for each extra server, with its own key file and
+  `server` label (see step 2). Servers that share a key can go in one job as extra
+  `targets` entries.
+- **Firewall on each LLM server:** let the monitoring VM reach the port, and only the VM:
 
   ```bash
-  sudo ufw allow from <monitoring-vm-ip> to any port 8080 proto tcp   # llama.cpp
-  sudo ufw allow from <monitoring-vm-ip> to any port 8000 proto tcp   # vLLM
+  sudo ufw allow from <monitoring-vm-ip> to any port 8080 proto tcp           # llama.cpp
+  sudo ufw allow from <monitoring-vm-ip> to any port <https-port> proto tcp   # vLLM
   ```
 
   If you also use these servers from OpenCode on other machines, allow those IPs as well.
@@ -192,78 +223,55 @@ After every config change:
 promtool check config /etc/prometheus/prometheus.yml && sudo systemctl reload prometheus
 ```
 
-### Servers behind HTTPS and/or an API key
+### vLLM servers: HTTPS and API key
 
-First check whether `/metrics` needs the key at all. Try without it, then with it:
+The `vllm-host-N` jobs in step 2 already use HTTPS and the key file. If a target isn't
+**UP**, check these:
 
-```bash
-curl -s  https://<llm-server>/metrics | head
-curl -s -H "Authorization: Bearer <api-key>" https://<llm-server>/metrics | head
-```
-
-- **llama.cpp** with `--api-key`: `/metrics` needs the key as well.
-- **vLLM** with `--api-key`: the key only protects the `/v1/...` routes, so `/metrics`
-  usually answers without it. Check with the first `curl`.
-- If the first `curl` already returns metrics, you only need `scheme: https`.
-
-**1. Store each key in a file that only Prometheus can read.** It stays out of the
-config file and out of your shell history:
+**Does `/metrics` need the key at all?** vLLM's own `--api-key` usually only protects the
+`/v1/...` routes, so `/metrics` often answers without a key. A reverse proxy in front of
+vLLM (nginx, Caddy, ...) may protect everything. Test both:
 
 ```bash
-sudo install -d -m 750 -o root -g prometheus /etc/prometheus/secrets
-sudo nano /etc/prometheus/secrets/llm-server-1.key     # paste only the key, save
-sudo chown root:prometheus /etc/prometheus/secrets/*.key
-sudo chmod 640 /etc/prometheus/secrets/*.key
+curl -s https://<vllm-host-1>:<https-port>/metrics | head
+curl -s -H "Authorization: Bearer <api-key>" https://<vllm-host-1>:<https-port>/metrics | head
 ```
 
-**2. Add `scheme`, `authorization` and, if needed, `tls_config` to the job.** The key is
-set per job, so a server with its own key needs its own job. Servers that share a key
-can stay together in one job.
+If the first one already returns metrics, you can delete the `authorization:` block (and the
+key file) for that job.
 
-```yaml
-  - job_name: llamacpp-server-1
-    scheme: https
-    metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials_file: /etc/prometheus/secrets/llm-server-1.key
-    static_configs:
-      - targets: ["llm1.example.com"]          # no port = 443 for https
-        labels: { server: llm-server-1, model: glm-5.3 }
+**Is the proxy's path different?** If the proxy serves vLLM under a sub-path, e.g.
+`https://host/vllm/v1/...`, set `metrics_path: /vllm/metrics`. Some proxies don't forward
+`/metrics` at all, so check the proxy config.
 
-  - job_name: vllm-host-1
-    scheme: https
-    metrics_path: /metrics
-    # authorization: only if the curl test above needed the key
-    static_configs:
-      - targets: ["vllm1.example.com:8443"]
-        labels: { server: vllm-host-1 }
-```
-
-Use the same `server` labels as before and your Grafana queries keep working. If the
-dashboard filters on `job`, use a regex like `job=~"llamacpp.*"`.
-
-**3. Certificate.** A normal certificate (e.g. Let's Encrypt) needs nothing extra. For a
+**Certificate.** A normal certificate (e.g. Let's Encrypt) needs nothing extra. For a
 **self-signed** certificate or one from your own CA, copy the CA certificate (`.crt`/`.pem`)
-to the VM and point the job at it:
+to the VM and add this to the job:
 
 ```yaml
     tls_config:
       ca_file: /etc/prometheus/secrets/my-ca.crt
-      # server_name: llm1.example.com   # if you connect by IP but the cert has a hostname
+      # server_name: vllm1.example.com   # if you connect by IP but the cert has a hostname
 ```
 
-`insecure_skip_verify: true` also works, but it turns off certificate checking. Use it only
-for a quick test.
+`insecure_skip_verify: true` (under `tls_config`) also works, but it turns off certificate
+checking. Use it only for a quick test.
 
-**4. Apply and check** `http://<vm-ip>:9090/targets`. Common errors:
+**Common errors** on `http://<vm-ip>:9090/targets`:
 
 | Error on the targets page | Meaning |
 |---------------------------|---------|
-| `401 Unauthorized`        | wrong or missing key, or the key file isn't readable by the `prometheus` user |
+| `401 Unauthorized` / `403 Forbidden` | wrong or missing key, or the key file isn't readable by the `prometheus` user |
+| `404 Not Found`           | wrong `metrics_path`, or the proxy doesn't forward `/metrics` |
 | `x509: certificate signed by unknown authority` | self-signed cert: add `tls_config.ca_file` |
 | `x509: certificate is valid for X, not Y` | set `tls_config.server_name`, or use the hostname from the cert |
 | `server gave HTTP response to HTTPS client` | the server is plain HTTP: remove `scheme: https` |
+
+Check the key file can be read by Prometheus:
+
+```bash
+sudo -u prometheus cat /etc/prometheus/secrets/vllm-host-1.key > /dev/null && echo OK
+```
 
 ## 5. Check it
 
@@ -288,7 +296,7 @@ Open `http://<vm-ip>:9090/targets`. All targets should show **UP**.
 | vLLM requests running / waiting      | `vllm:num_requests_running`, `vllm:num_requests_waiting` |
 | vLLM generated tokens/s              | `rate(vllm:generation_tokens_total[1m])`       |
 | vLLM time to first token (p95)       | `histogram_quantile(0.95, rate(vllm:time_to_first_token_seconds_bucket[5m]))` |
-| Server reachable (1 = up, 0 = down)  | `up{job=~"llamacpp\|vllm"}`                    |
+| Server reachable (1 = up, 0 = down)  | `up{job=~"llamacpp\|vllm.*"}`                  |
 
 Metric names can change between versions. If a query is empty, look up the exact
 name with `curl -s <server>/metrics | grep -v '^#'`.
