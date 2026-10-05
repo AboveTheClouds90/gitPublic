@@ -7,17 +7,17 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # The VM itself (CPU, RAM, disk, network)
+  # The VM itself (CPU, RAM, disk, network), from prometheus-node-exporter
   - job_name: node
     static_configs:
-      - targets: ["node-exporter:9100"]
+      - targets: ["localhost:9100"]
 
   # llama.cpp llama-server, needs to be started with --metrics.
-  # host.docker.internal = the VM running this stack. Use the server's IP if it runs elsewhere.
+  # Use the server's IP instead of localhost if it runs on another machine.
   - job_name: llamacpp
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8080"]
+      - targets: ["localhost:8080"]
         labels:
           model: glm-5.3
 
