@@ -1,17 +1,20 @@
 # Prometheus + Grafana monitoring (native install, Ubuntu/Debian)
 
-Installs everything with `apt`, running as systemd services. No Docker, no git clone:
-**every step is a block you paste into the VM's terminal.** Monitors:
+Installs Prometheus and Grafana with `apt`, running as systemd services. No Docker, no git clone:
+**every step is a block you paste into the VM's terminal.**
 
-- **the VM itself** (CPU, RAM, disk, network) using node-exporter
+It collects the stats that the LLM servers report on their own `/metrics` address:
+
 - **one or more llama.cpp `llama-server`s** (e.g. GLM-5.3, see [../llamaCppInstr.md](../llamaCppInstr.md))
 - **one or more vLLM servers**
 
-| Service       | apt package                 | systemd unit               | Port |
-|---------------|-----------------------------|----------------------------|------|
-| Prometheus    | `prometheus`                | `prometheus`               | 9090 |
-| node-exporter | `prometheus-node-exporter`  | `prometheus-node-exporter` | 9100 |
-| Grafana       | `grafana` (Grafana apt repo)| `grafana-server`           | 3000 |
+These are numbers over time (tokens/s, requests, cache use, latency), not logs.
+Machine stats (CPU, RAM, disk) are not collected. For those, you would add node-exporter on each server.
+
+| Service    | apt package                  | systemd unit     | Port |
+|------------|------------------------------|------------------|------|
+| Prometheus | `prometheus`                 | `prometheus`     | 9090 |
+| Grafana    | `grafana` (Grafana apt repo) | `grafana-server` | 3000 |
 
 > **How to paste a file:** the blocks below that start with `sudo tee ... <<'EOF'` write a
 > whole file in one go. Paste the entire block, from the first line through `EOF`.
@@ -22,14 +25,15 @@ Installs everything with `apt`, running as systemd services. No Docker, no git c
 > ([prometheus/prometheus.yml](prometheus/prometheus.yml),
 > [grafana/provisioning/datasources/prometheus.yml](grafana/provisioning/datasources/prometheus.yml)).
 
-## 1. Install Prometheus + node-exporter
+## 1. Install Prometheus
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y prometheus prometheus-node-exporter curl
+sudo apt-get install -y --no-install-recommends prometheus curl
 ```
 
-Both start automatically.
+`--no-install-recommends` stops apt from pulling in node-exporter automatically.
+Prometheus starts by itself after the install.
 
 > Ubuntu's `prometheus` package is often a few versions behind upstream. That's fine
 > for this setup. If you need the latest version, use the official binaries from
@@ -57,20 +61,6 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
-
-  # Machine stats (CPU, RAM, disk, network), from prometheus-node-exporter.
-  # Install prometheus-node-exporter on each LLM server too and list them here.
-  - job_name: node
-    static_configs:
-      - targets: ["localhost:9100"]
-        labels:
-          server: monitoring-vm
-      - targets: ["<llm-server-1>:9100"]
-        labels:
-          server: llm-server-1
-      - targets: ["<llm-server-2>:9100"]
-        labels:
-          server: llm-server-2
 
   # llama.cpp llama-server instances, each started with --metrics.
   # One entry per server; add or remove blocks as needed.
@@ -169,7 +159,7 @@ curl -s http://<vllm-host-1>:8000/metrics | head
 
 ### Multiple LLM servers
 
-Each server is one entry under the matching job (`llamacpp`, `vllm` or `node`), with a
+Each server is one entry under the matching job (`llamacpp` or `vllm`), with a
 `server` label so you can tell them apart:
 
 ```yaml
@@ -184,15 +174,14 @@ Each server is one entry under the matching job (`llamacpp`, `vllm` or `node`), 
 
 - If one machine runs several llama-servers on different ports, add one entry per port
   (`10.0.0.11:8080`, `10.0.0.11:8081`, ...).
-- For CPU, RAM and disk stats of each LLM server, install the exporter **on that server**
-  with `sudo apt-get install -y prometheus-node-exporter` and add it under the `node` job.
-- **Firewall on each LLM server:** let the monitoring VM reach the ports, and only the VM:
+- **Firewall on each LLM server:** let the monitoring VM reach the API port, and only the VM:
 
   ```bash
-  sudo ufw allow from <monitoring-vm-ip> to any port 8080,9100 proto tcp   # llama.cpp
-  sudo ufw allow from <monitoring-vm-ip> to any port 8000,9100 proto tcp   # vLLM
+  sudo ufw allow from <monitoring-vm-ip> to any port 8080 proto tcp   # llama.cpp
+  sudo ufw allow from <monitoring-vm-ip> to any port 8000 proto tcp   # vLLM
   ```
 
+  If you also use these servers from OpenCode on other machines, allow those IPs as well.
 - In Grafana, split charts by server with `by (server)`, for example
   `sum by (server) (llamacpp:requests_processing)`. You can also add a dashboard variable
   with the query `label_values(server)` to get a server dropdown.
@@ -206,7 +195,7 @@ promtool check config /etc/prometheus/prometheus.yml && sudo systemctl reload pr
 ## 5. Check it
 
 ```bash
-systemctl status prometheus prometheus-node-exporter grafana-server --no-pager
+systemctl status prometheus grafana-server --no-pager
 ```
 
 Open `http://<vm-ip>:9090/targets`. All targets should show **UP**.
@@ -216,9 +205,7 @@ Open `http://<vm-ip>:9090/targets`. All targets should show **UP**.
 1. Open `http://<vm-ip>:3000` and log in as `admin` / `admin`. **Change the password when
    it asks you to.** (Forgot it? `sudo grafana cli admin reset-admin-password <new-pw>`)
 2. The Prometheus data source is already set up from step 3.
-3. VM dashboard: **Dashboards → New → Import**, enter ID **`1860`** (Node Exporter Full)
-   and select the Prometheus data source.
-4. LLM panels: create a new dashboard and add panels with these queries:
+3. Create a new dashboard and add panels with these queries:
 
 | What                                 | Query                                          |
 |--------------------------------------|------------------------------------------------|
@@ -228,6 +215,7 @@ Open `http://<vm-ip>:9090/targets`. All targets should show **UP**.
 | vLLM requests running / waiting      | `vllm:num_requests_running`, `vllm:num_requests_waiting` |
 | vLLM generated tokens/s              | `rate(vllm:generation_tokens_total[1m])`       |
 | vLLM time to first token (p95)       | `histogram_quantile(0.95, rate(vllm:time_to_first_token_seconds_bucket[5m]))` |
+| Server reachable (1 = up, 0 = down)  | `up{job=~"llamacpp\|vllm"}`                    |
 
 Metric names can change between versions. If a query is empty, look up the exact
 name with `curl -s <server>/metrics | grep -v '^#'`.
@@ -237,8 +225,8 @@ vLLM also has ready-made Grafana dashboards in its repo, under `examples/`
 
 ## Security
 
-Prometheus (9090) and node-exporter (9100) have **no login**, and both listen on all
-interfaces by default. Use a firewall:
+Prometheus (9090) has **no login** and listens on all interfaces by default. Use a firewall
+on the monitoring VM:
 
 ```bash
 sudo ufw allow OpenSSH
@@ -246,23 +234,20 @@ sudo ufw allow from <your-ip> to any port 3000 proto tcp   # Grafana, only from 
 sudo ufw enable
 ```
 
-With only those rules, 9090 and 9100 stay closed from outside. Grafana still reaches them
-through `localhost`. To open the Prometheus UI, use an SSH tunnel:
+With only those rules, 9090 stays closed from outside. Grafana still reaches it through
+`localhost`. To open the Prometheus UI, use an SSH tunnel:
 
 ```bash
 ssh -L 9090:localhost:9090 user@<vm-ip>    # then open http://localhost:9090
 ```
-
-The LLM servers' ports (8080, 8000, 9100) must be reachable **from this VM**, and only
-from it. See "Multiple LLM servers" above.
 
 ## Useful commands
 
 ```bash
 journalctl -u prometheus -f                 # Prometheus logs
 journalctl -u grafana-server -f             # Grafana logs
-sudo systemctl restart prometheus grafana-server prometheus-node-exporter
-sudo apt-get update && sudo apt-get upgrade # updates all three
+sudo systemctl restart prometheus grafana-server
+sudo apt-get update && sudo apt-get upgrade # updates both
 ```
 
 Config and data locations:
@@ -272,7 +257,6 @@ Config and data locations:
 | Prometheus config     | `/etc/prometheus/prometheus.yml`    |
 | Prometheus flags      | `/etc/default/prometheus`           |
 | Prometheus data       | `/var/lib/prometheus/metrics2/`     |
-| node-exporter flags   | `/etc/default/prometheus-node-exporter` |
 | Grafana config        | `/etc/grafana/grafana.ini`          |
 | Grafana provisioning  | `/etc/grafana/provisioning/`        |
 | Grafana data          | `/var/lib/grafana/`                 |

@@ -7,20 +7,6 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # Machine stats (CPU, RAM, disk, network), from prometheus-node-exporter.
-  # Install prometheus-node-exporter on each LLM server too and list them here.
-  - job_name: node
-    static_configs:
-      - targets: ["localhost:9100"]
-        labels:
-          server: monitoring-vm
-      - targets: ["<llm-server-1>:9100"]
-        labels:
-          server: llm-server-1
-      - targets: ["<llm-server-2>:9100"]
-        labels:
-          server: llm-server-2
-
   # llama.cpp llama-server instances, each started with --metrics.
   # One entry per server; add or remove blocks as needed.
   - job_name: llamacpp
