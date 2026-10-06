@@ -157,21 +157,49 @@ To try your own texts, edit the JSON in each request's **Body** tab.
 - **`--max-model-len 8192`** caps the context, which is 32k by default for these models. That saves memory. Raise it if your documents are long.
 - **Add `--api-key <key>`** to both commands if the ports are reachable from outside the machine.
 
-## Sources (search these titles)
+## Sources
+
+### Where each flag comes from
+
+None of the `vllm serve` flags come from the Hugging Face model cards.
+Those cards only show older Python examples.
+All flags come from vLLM's own docs and examples in the GitHub repo `vllm-project/vllm`, on the `main` branch, checked on 2026-10-06.
+Open the file on GitHub and go to the line number.
+
+| Flag / fact | Source (repo `vllm-project/vllm`, branch `main`) | Line |
+|---|---|---|
+| `Qwen/Qwen3-Embedding-0.6B` is supported as an embedding model (`Qwen3ForCausalLM`, marked C) | `docs/models/pooling_models/embed.md` | 53 |
+| C = "Automatically converted into an embedding model via `--convert embed`". This means `--convert embed` is probably redundant but harmless. | `docs/models/pooling_models/embed.md` | 99 |
+| What `--convert <type>` does in general | `docs/models/pooling_models/README.md` | 249–263 |
+| Reranker `--hf_overrides '{"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no","yes"], "is_original_qwen3_reranker": true}'` | `docs/models/pooling_models/scoring.md` | 88 |
+| `Qwen/Qwen3-Reranker-0.6B` and `tomaarsen/Qwen3-Reranker-0.6B-seq-cls` listed, with the `qwen3_reranker.jinja` template | `docs/models/pooling_models/scoring.md` | 52 |
+| Full reranker command with `--runner pooling` and `--chat-template`, the seq-cls alternative, and the `/score` body | `examples/pooling/score/qwen3_reranker_online.py` | 21, 25 |
+| Same overrides in Python, with comments explaining each key | `examples/pooling/score/qwen3_reranker_offline.py` | 52+ |
+| Reranker chat template (copied into this directory) | `examples/pooling/score/template/qwen3_reranker.jinja` | — |
+
+What the Hugging Face model cards say:
+
+- **`Qwen/Qwen3-Embedding-0.6B`:** the "vLLM Usage" section uses `LLM(model=..., task="embed")`. `task` has since been removed from vLLM.
+  This card is the source for the `Instruct: …\nQuery: …` query format, the 1–5% note, the 32k context and the 1024 dimensions.
+  <https://huggingface.co/Qwen/Qwen3-Embedding-0.6B>
+- **`Qwen/Qwen3-Reranker-0.6B`:** the "vLLM Usage" section has **no** `hf_overrides`.
+  It scores in Python by generating and reading the "yes"/"no" token probabilities.
+  It is a valid approach, but it doesn't give you an HTTP rerank server.
+  <https://huggingface.co/Qwen/Qwen3-Reranker-0.6B>
+- **Background on why the reranker is converted to a classifier:** Hugging Face discussion #3 on `Qwen/Qwen3-Reranker-0.6B`.
+  <https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/discussions/3>
+
+### Other sources
 
 | What | Where |
 |---|---|
-| vLLM 0.31.0 is the latest release (2026-10-05) | PyPI "vllm" → Release history — <https://pypi.org/project/vllm/#history> |
-| `--gpu-memory-utilization` per-instance, `--runner`, `--convert`, `--hf-overrides`, `--max-model-len` | vLLM docs "Engine Arguments" — <https://docs.vllm.ai/en/latest/configuration/engine_args/> |
-| `--task` removed; endpoint list (`/v1/embeddings`, `/rerank`, `/score`, …) | vLLM docs "Pooling Models" — <https://docs.vllm.ai/en/latest/models/pooling_models/> |
-| `--runner pooling --convert embed`; Qwen3-Embedding listed as supported | vLLM docs "Pooling Models → Embed" — <https://docs.vllm.ai/en/latest/models/pooling_models/embed/> |
-| Qwen3-Reranker `--hf-overrides` command | vLLM docs "Pooling Models → Scoring" — <https://docs.vllm.ai/en/latest/models/pooling_models/scoring/> |
-| Reranker serve command with `--chat-template`, seq-cls checkpoint, `/score` request body | vLLM repo `examples/pooling/score/qwen3_reranker_online.py` — <https://github.com/vllm-project/vllm/blob/main/examples/pooling/score/qwen3_reranker_online.py> |
-| Reranker chat template | vLLM repo `examples/pooling/score/template/qwen3_reranker.jinja` |
-| Query instruction format, 1–5 % note, 32k context, 1024 dim | Hugging Face model card "Qwen/Qwen3-Embedding-0.6B" — <https://huggingface.co/Qwen/Qwen3-Embedding-0.6B> |
-| Why the original reranker needs a conversion | Hugging Face "Qwen/Qwen3-Reranker-0.6B" discussion #3 — <https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/discussions/3> |
-| `.bru` file syntax (`meta`, `post`, `auth:bearer`, `body:json`, `tests`, `vars:secret`) | Bruno docs "Bru Lang" — <https://docs.usebruno.com/bru-lang/overview>; parser fixtures in GitHub `usebruno/bruno` → `packages/bruno-lang/v2/tests` |
-| Community reports on two instances on one GPU | vLLM Forums "2 vllm containers on a single GPU" — <https://discuss.vllm.ai/t/2-vllm-containers-on-a-single-gpu/608> |
+| vLLM 0.31.0 is the latest release (2026-10-05) | PyPI "vllm" → Release history: <https://pypi.org/project/vllm/#history> |
+| `--gpu-memory-utilization` is a per-instance limit; `--runner`, `--convert`, `--hf-overrides`, `--max-model-len` | vLLM docs "Engine Arguments": <https://docs.vllm.ai/en/latest/configuration/engine_args/> |
+| `--task` removed; endpoint list (`/v1/embeddings`, `/rerank`, `/score`, …) | vLLM docs "Pooling Models": <https://docs.vllm.ai/en/latest/models/pooling_models/> |
+| `.bru` file syntax (`meta`, `post`, `auth:bearer`, `body:json`, `tests`, `vars:secret`) | Bruno docs "Bru Lang": <https://docs.usebruno.com/bru-lang/overview>; parser test files in GitHub `usebruno/bruno` under `packages/bruno-lang/v2/tests` |
+| Community reports on running two instances on one GPU | vLLM Forums "2 vllm containers on a single GPU": <https://discuss.vllm.ai/t/2-vllm-containers-on-a-single-gpu/608> |
 
-**Not tested on hardware.** The commands come from the docs above and were not run on a GPU.
+Line numbers are as of 2026-10-06. They can move when vLLM updates its docs, so if a line doesn't match, search the file for `is_original_qwen3_reranker` or `--convert embed`.
+
+**Not tested on hardware.** The commands come from the sources above and were not run on a GPU.
 The `/rerank` request body follows the documented Jina/Cohere-style API and is not copied from a Qwen-specific example.
