@@ -1,0 +1,38 @@
+meta {
+  name: Score
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{rerankBaseUrl}}/score
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{apiKey}}
+}
+
+body:json {
+  {
+    "model": "{{rerankModel}}",
+    "queries": [
+      "What is the capital of China?",
+      "Explain gravity"
+    ],
+    "documents": [
+      "The capital of China is Beijing.",
+      "Gravity is a force that attracts two bodies towards each other."
+    ]
+  }
+}
+
+tests {
+  test("status 200", function () {
+    expect(res.status).to.equal(200);
+  });
+  test("one score per query/document pair", function () {
+    expect(res.body.data).to.have.lengthOf(2);
+  });
+}

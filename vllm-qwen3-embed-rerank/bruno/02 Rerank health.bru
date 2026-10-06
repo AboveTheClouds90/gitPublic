@@ -1,0 +1,17 @@
+meta {
+  name: Rerank health
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{rerankBaseUrl}}/health
+  body: none
+  auth: none
+}
+
+tests {
+  test("server is ready", function () {
+    expect(res.status).to.equal(200);
+  });
+}

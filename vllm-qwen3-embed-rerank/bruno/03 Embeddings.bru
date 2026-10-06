@@ -1,0 +1,37 @@
+meta {
+  name: Embeddings
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{embedBaseUrl}}/v1/embeddings
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{apiKey}}
+}
+
+body:json {
+  {
+    "model": "{{embedModel}}",
+    "input": [
+      "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: What is the capital of China?",
+      "The capital of China is Beijing."
+    ],
+    "encoding_format": "float"
+  }
+}
+
+tests {
+  test("status 200", function () {
+    expect(res.status).to.equal(200);
+  });
+  test("one embedding per input, 1024 dims", function () {
+    const data = res.body.data;
+    expect(data).to.have.lengthOf(2);
+    expect(data[0].embedding).to.have.lengthOf(1024);
+  });
+}

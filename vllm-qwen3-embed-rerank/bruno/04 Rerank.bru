@@ -1,0 +1,38 @@
+meta {
+  name: Rerank
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{rerankBaseUrl}}/rerank
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{apiKey}}
+}
+
+body:json {
+  {
+    "model": "{{rerankModel}}",
+    "query": "What is the capital of China?",
+    "documents": [
+      "The capital of China is Beijing.",
+      "Gravity is a force that attracts two bodies towards each other."
+    ]
+  }
+}
+
+tests {
+  test("status 200", function () {
+    expect(res.status).to.equal(200);
+  });
+  test("Beijing document ranks first", function () {
+    const results = res.body.results;
+    expect(results).to.have.lengthOf(2);
+    expect(results[0].index).to.equal(0);
+    expect(results[0].relevance_score).to.be.above(results[1].relevance_score);
+  });
+}

@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "name": "vLLM Qwen3 Embed + Rerank",
+  "type": "collection",
+  "ignore": ["node_modules", ".git"]
+}
