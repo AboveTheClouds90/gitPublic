@@ -2,33 +2,80 @@
 
 Runs two vLLM servers on the same GPU, one per model, on separate ports:
 
-| Model | Port | Endpoints |
-|---|---|---|
-| `Qwen/Qwen3-Embedding-0.6B` | 8001 | `/v1/embeddings` |
-| `Qwen/Qwen3-Reranker-0.6B` | 8002 | `/rerank`, `/v1/rerank`, `/score` |
+| Model | Port | Endpoints | Tested on hardware |
+|---|---|---|---|
+| `Qwen/Qwen3-Embedding-0.6B` | 8001 | `/v1/embeddings` | yes, loads and works |
+| `Qwen/Qwen3-Reranker-0.6B` | 8002 | `/rerank`, `/v1/rerank`, `/score` | not yet: needs the CUDA Toolkit (step 2) |
 
 Checked against **vLLM 0.31.0** (released 2026-10-05) and the vLLM `latest` docs on 2026-10-06.
 The sources are listed at the bottom.
 
-## 1. Install
+## 1. Install vLLM
 
 ```bash
 pip install -U "vllm==0.31.0"
 vllm --version
 ```
 
-## 2. Get the reranker chat template
+## 2. Install the CUDA Toolkit (needed for the reranker)
 
-The reranker needs a chat template that wraps query and document in Qwen's yes/no prompt.
-A copy is in this directory: [`qwen3_reranker.jinja`](qwen3_reranker.jinja).
-It is the vLLM repo file `examples/pooling/score/template/qwen3_reranker.jinja`. To download it fresh:
+The pip wheels already bring the CUDA *runtime*, which is enough for the embedding model.
+At startup the embedding model only prints a warning about the missing `nvcc` / `CUDA_HOME`, and you can ignore it.
 
-```bash
-curl -L -o qwen3_reranker.jinja \
-  https://raw.githubusercontent.com/vllm-project/vllm/main/examples/pooling/score/template/qwen3_reranker.jinja
+The **reranker fails** without the CUDA *Toolkit*, which provides the `nvcc` compiler:
+
+```
+RuntimeError: Could not find nvcc and default CUDA_HOME
 ```
 
-## 3. Start the embedding server (port 8001)
+Something in the reranker's startup compiles a GPU kernel on your machine, and that needs `nvcc`.
+Install a Toolkit that matches the CUDA version PyTorch was built with:
+
+```bash
+python -c "import torch; print(torch.version.cuda)"   # e.g. 12.8
+```
+
+On Ubuntu 24.04, use NVIDIA's apt repo. On 22.04, replace `ubuntu2404` with `ubuntu2204`.
+Replace `12-8` / `12.8` with your version.
+
+```bash
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt update
+sudo apt install -y cuda-toolkit-12-8            # toolkit only, does NOT touch the driver
+
+echo 'export CUDA_HOME=/usr/local/cuda-12.8' >> ~/.bashrc
+echo 'export PATH=$CUDA_HOME/bin:$PATH'       >> ~/.bashrc
+source ~/.bashrc
+nvcc --version                                    # should print 12.8
+```
+
+- **Don't use `apt install nvidia-cuda-toolkit`.** Ubuntu's own package is usually an older CUDA version that doesn't match PyTorch.
+- **The first reranker start can take a few minutes.** It compiles the kernel once and caches it, so later starts are fast.
+
+## 3. Get the reranker chat template
+
+The reranker needs a chat template that wraps query and document in Qwen's yes/no prompt.
+It is the vLLM repo file `examples/pooling/score/template/qwen3_reranker.jinja`.
+A copy is also in this directory: [`qwen3_reranker.jinja`](qwen3_reranker.jinja).
+
+**The file must be on the GPU machine.** Download it there to a fixed folder, and always pass the full path.
+A relative path like `./qwen3_reranker.jinja` only works if you start vLLM from the folder that contains the file.
+Otherwise vLLM fails with *"The supplied chat template string appears path-like, but doesn't exist"*.
+
+```bash
+mkdir -p ~/vllm-templates
+curl -fL -o ~/vllm-templates/qwen3_reranker.jinja \
+  https://raw.githubusercontent.com/vllm-project/vllm/main/examples/pooling/score/template/qwen3_reranker.jinja
+
+ls -l ~/vllm-templates/qwen3_reranker.jinja       # must exist, ~600 bytes
+head -1 ~/vllm-templates/qwen3_reranker.jinja     # should print <|im_start|>system
+```
+
+If the GPU machine can't reach GitHub, copy the file over from your PC:
+`scp vllm-qwen3-embed-rerank/qwen3_reranker.jinja user@gpu-host:~/vllm-templates/`
+
+## 4. Start the embedding server (port 8001)
 
 ```bash
 vllm serve Qwen/Qwen3-Embedding-0.6B \
@@ -44,17 +91,19 @@ Wait until it is ready:
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8001/health   # 200 = ready
 ```
 
-## 4. Start the reranker server (port 8002)
+## 5. Start the reranker server (port 8002)
 
 ```bash
 vllm serve Qwen/Qwen3-Reranker-0.6B \
   --port 8002 \
   --runner pooling \
   --hf-overrides '{"architectures":["Qwen3ForSequenceClassification"],"classifier_from_token":["no","yes"],"is_original_qwen3_reranker":true}' \
-  --chat-template ./qwen3_reranker.jinja \
+  --chat-template "$HOME/vllm-templates/qwen3_reranker.jinja" \
   --gpu-memory-utilization 0.15 \
   --max-model-len 8192
 ```
+
+Use `$HOME`, not `~`, inside the quotes, because the shell doesn't expand `~` inside double quotes.
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8002/health   # 200 = ready
@@ -67,12 +116,12 @@ The vLLM example says it is more efficient than the original:
 vllm serve tomaarsen/Qwen3-Reranker-0.6B-seq-cls \
   --port 8002 \
   --runner pooling \
-  --chat-template ./qwen3_reranker.jinja \
+  --chat-template "$HOME/vllm-templates/qwen3_reranker.jinja" \
   --gpu-memory-utilization 0.15 \
   --max-model-len 8192
 ```
 
-## 5. Test
+## 6. Test
 
 Embeddings:
 
@@ -104,7 +153,7 @@ curl -s http://localhost:8002/score -H "Content-Type: application/json" -d '{
 }'
 ```
 
-## 6. Test with Bruno
+## 7. Test with Bruno
 
 A ready-made Bruno collection is in [`bruno/`](bruno/):
 
@@ -201,5 +250,5 @@ What the Hugging Face model cards say:
 
 Line numbers are as of 2026-10-06. They can move when vLLM updates its docs, so if a line doesn't match, search the file for `is_original_qwen3_reranker` or `--convert embed`.
 
-**Not tested on hardware.** The commands come from the sources above and were not run on a GPU.
+**Hardware status:** the embedding command was run on a GPU and works. The reranker command has not run successfully yet (see step 2).
 The `/rerank` request body follows the documented Jina/Cohere-style API and is not copied from a Qwen-specific example.
