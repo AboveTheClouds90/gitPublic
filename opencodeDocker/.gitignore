@@ -1,0 +1,4 @@
+# Local paths, not for the public repo
+.env
+# Default workspace when WORKSPACE_DIR is not set
+workspace/

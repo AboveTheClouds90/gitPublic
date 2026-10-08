@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "litellm/your-model",
+  "providers": {
+    "litellm": {
+      "name": "LiteLLM",
+      "env": ["LITE_LLM"],
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "http://host.docker.internal:4000/v1"
+      },
+      "models": {
+        "your-model": {
+          "name": "your-model"
+        }
+      }
+    }
+  }
+}

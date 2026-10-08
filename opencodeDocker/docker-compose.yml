@@ -1,0 +1,33 @@
+# Bare-bones OpenCode V2 in a container, using the official image.
+# Usage (Windows PowerShell, from this folder):
+#   Copy-Item .env.example .env      # once, then set WORKSPACE_DIR and PROJECT
+#   docker compose run --rm opencode
+# Only WORKSPACE_DIR is visible to OpenCode; the rest of the host is not.
+
+services:
+  opencode:
+    # V2 images use versioned tags (no floating "latest" for V2)
+    image: ghcr.io/anomalyco/opencode:${OPENCODE_VERSION:-2.0.6}
+    stdin_open: true
+    tty: true
+    # OpenCode starts in the project picked by PROJECT
+    working_dir: /workspace/${PROJECT:-}
+    volumes:
+      # Your folder of projects (the only project folder mounted)
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
+      # Your opencode.json, editable on the host (global config)
+      - ./config:/root/.config/opencode
+      # V2 data (sessions DB, logs, auth) and service state,
+      # kept in Docker volumes, not on the host
+      - opencode-data:/root/.local/share/opencode
+      - opencode-state:/root/.local/state/opencode
+    environment:
+      # Pass through whichever provider key you use (empty ones are ignored)
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - LITE_LLM
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  opencode-data:
+  opencode-state:
