@@ -8,7 +8,7 @@ Known issues and limits are in [problems.md](problems.md).
 |---|---|---|
 | `WORKSPACE_DIR` (e.g. `C:\code`) | `/workspace` | your folder of projects |
 | `WORKSPACE_DIR\PROJECT` (e.g. `C:\code\my-app`) | `/workspace/my-app` | where OpenCode starts |
-| `opencodeDocker\config\` | `/root/.config/opencode` | your `opencode.json` (global config) |
+| `CONFIG_DIR` (default `opencodeDocker\config\`) | `/root/.config/opencode` | folder with your `opencode.json` (global config) |
 | Docker volume `opencode-data` | `/root/.local/share/opencode` | sessions, logs, logins |
 | Docker volume `opencode-state` | `/root/.local/state/opencode` | service state |
 
@@ -36,7 +36,9 @@ Known issues and limits are in [problems.md](problems.md).
     ```
   - Open a **new** terminal afterwards. Terminals that were already open still have the old value.
   - For another provider, add its variable name under `environment:` in `docker-compose.yml`.
-- **Edit `config\opencode.json`:**
+- **Config folder:** to use your own folder instead of `config\`, set `CONFIG_DIR=D:/KI/docker/config` in `.env`.
+  The folder must contain `opencode.json` (or `opencode.jsonc`).
+- **Or edit the example `config\opencode.json`:**
   - It is set up for a LiteLLM proxy and reads the key from `LITE_LLM` (`"env": ["LITE_LLM"]`).
   - Replace `your-model` (in both places) with a model name your LiteLLM proxy serves.
   - Set `baseURL` to your proxy's address.
@@ -62,7 +64,7 @@ docker compose run --rm opencode
 
 - The files are **merged**. Later files override only the keys they set.
 - From lowest to highest priority:
-  1. `opencodeDocker\config\opencode.json`: global, for everything
+  1. `CONFIG_DIR\opencode.json` (default `opencodeDocker\config\`): global, for everything
   2. `C:\code\opencode.json`: all projects in the workspace (OpenCode searches up from the project folder)
   3. `C:\code\my-app\opencode.json`: one project
   4. `.opencode\opencode.json` in those folders: overrides the plain `opencode.json` files

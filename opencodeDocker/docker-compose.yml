@@ -15,8 +15,8 @@ services:
     volumes:
       # Your folder of projects (the only project folder mounted)
       - ${WORKSPACE_DIR:-./workspace}:/workspace
-      # Your opencode.json, editable on the host (global config)
-      - ./config:/root/.config/opencode
+      # Folder with your opencode.json, editable on the host (global config)
+      - ${CONFIG_DIR:-./config}:/root/.config/opencode
       # V2 data (sessions DB, logs, auth) and service state,
       # kept in Docker volumes, not on the host
       - opencode-data:/root/.local/share/opencode
