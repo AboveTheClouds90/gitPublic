@@ -67,6 +67,16 @@ hf download unsloth/GLM-5.3-Flash-GGUF \
 The model is multimodal, but this setup serves text only.
 For images, also download `mmproj-F16.gguf` from the same repo and add `--mmproj <path>`.
 
+## 5. Test it
+
+```bash
+./test-curls.sh                      # on the VM
+HOST=192.168.1.50 ./test-curls.sh    # from another machine, with the VM's IP
+```
+
+The script checks `/health`, lists the model, and sends one chat message.
+The answer can take a while, because the model thinks before it replies.
+
 ## Sources
 
 - Unsloth guide: https://unsloth.ai/docs/models/glm-5.3-flash
