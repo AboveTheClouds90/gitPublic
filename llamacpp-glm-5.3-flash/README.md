@@ -107,6 +107,16 @@ On the Proxmox host (not in the VM), as root:
 The script lists each DIMM slot with its size and speed, then counts the filled slots.
 Full bandwidth needs 12 DIMMs, one per channel, running at 4800 MT/s.
 
+Without access to the host, measure the bandwidth from inside the VM instead:
+
+```bash
+./bench-ram.sh
+```
+
+The script downloads and builds the STREAM benchmark, then runs it with 16, 30, 48 and 96 threads.
+Stop llama-server first.
+The comments at the top of `bench-ram.sh` explain how to read the Triad number.
+
 ## Sources
 
 - Unsloth guide: https://unsloth.ai/docs/models/glm-5.3-flash
