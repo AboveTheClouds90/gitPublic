@@ -27,12 +27,13 @@ Set these in the VM's Hardware and Options tabs before you start it:
 
 ## 2. Build llama.cpp
 
-GLM-5.3-Flash needs Unsloth's `glm5next/upstream` branch of llama.cpp (unslothai/llama.cpp PR #61), because mainline does not support it yet.
+Mainline llama.cpp supports GLM-5.3-Flash (PR #27773), and MTP since 2026-10-07 (PR #29928).
+Unsloth's `glm5next/upstream` branch is no longer needed.
 
 ```bash
 apt-get update
 apt-get install pciutils build-essential cmake curl libcurl4-openssl-dev -y
-git clone --branch glm5next/upstream https://github.com/unslothai/llama.cpp
+git clone https://github.com/ggml-org/llama.cpp
 cmake llama.cpp -B llama.cpp/build \
     -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=OFF -DGGML_NATIVE=ON
 cmake --build llama.cpp/build --config Release -j --clean-first --target llama-cli llama-server llama-gguf-split llama-bench
@@ -117,7 +118,22 @@ The script downloads and builds the STREAM benchmark, then runs it with 16, 30, 
 Stop llama-server first.
 The comments at the top of `bench-ram.sh` explain how to read the Triad number.
 
+## 8. Faster answers
+
+The biggest gain is MTP, where the model drafts the next token and checks it in the same pass (`llama-bench` can't measure it), plus `"reasoning_effort":"low"` for simple questions.
+Smaller gains: a `UD-Q3_K_XL` quant, an f16 KV cache (`-ctk f16 -ctv f16`), `--poll 100`.
+
+To turn on MTP, update llama.cpp, add `--spec-type draft-mtp` to `start-server.sh`, and compare `timings.predicted_per_second` in the reply with and without it:
+
+```bash
+cd /llama.cpp && git pull && cmake --build build --config Release -j
+```
+
+Unsloth recommends 2 draft tokens; more slow it down.
+MTP breaks image input, so don't combine it with `--mmproj`.
+
 ## Sources
 
 - Unsloth guide: https://unsloth.ai/docs/models/glm-5.3-flash
 - GGUF files: https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF
+- MTP PR: https://github.com/ggml-org/llama.cpp/pull/29928
