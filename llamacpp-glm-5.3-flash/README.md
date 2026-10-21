@@ -6,7 +6,7 @@ GLM-5.3-Flash is Z.ai's 320B MoE model with 18B active parameters, served here a
 |---|---|
 | Hypervisor | Proxmox VE |
 | RAM | 512 GB |
-| Cores | 96 |
+| CPU | AMD EPYC 9654, 96 cores, 12-channel DDR5-4800 (460.8 GB/s peak) |
 | GPU | none |
 | Quant | `UD-Q4_K_XL` (~200 GB, 6 shards) |
 
@@ -35,7 +35,7 @@ apt-get install pciutils build-essential cmake curl libcurl4-openssl-dev -y
 git clone --branch glm5next/upstream https://github.com/unslothai/llama.cpp
 cmake llama.cpp -B llama.cpp/build \
     -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=OFF -DGGML_NATIVE=ON
-cmake --build llama.cpp/build --config Release -j --clean-first --target llama-cli llama-server llama-gguf-split
+cmake --build llama.cpp/build --config Release -j --clean-first --target llama-cli llama-server llama-gguf-split llama-bench
 cp llama.cpp/build/bin/llama-* llama.cpp
 ```
 
@@ -56,7 +56,7 @@ hf download unsloth/GLM-5.3-Flash-GGUF \
 
 | Flag | Why |
 |---|---|
-| `-t 96 -tb 96` | One thread per core, for generation and for prompt processing |
+| `-t 30 -tb 96` | 30 threads for generation, which was fastest in `bench-threads.sh`. All 96 for prompt processing. |
 | `-c 131072 -np 1` | 128k context with one slot. The model supports up to 1,048,576 tokens. |
 | `-fa on -ctk q8_0 -ctv q8_0` | Flash attention plus an 8-bit KV cache, which halves the cache's RAM |
 | `--mlock` | Keeps the weights in RAM so they never get swapped out |
@@ -76,6 +76,36 @@ HOST=192.168.1.50 ./test-curls.sh    # from another machine, with the VM's IP
 
 The script checks `/health`, lists the model, and sends one chat message.
 The answer can take a while, because the model thinks before it replies.
+
+## 6. Find the fastest thread count
+
+```bash
+./bench-threads.sh
+```
+
+Stop the server first.
+The script runs `llama-bench` with 8, 16, 24, 32 and 40 threads and saves the table to `bench-threads-<date>.md`.
+Pick other counts with `THREADS=40,48,64,96 ./bench-threads.sh`.
+
+- Set `-t` in `start-server.sh` to the fastest `tg128` (output tokens/s).
+- Set `-tb` to the fastest `pp512` (prompt tokens/s).
+
+They usually differ.
+Generation is limited by memory bandwidth, so it peaks below the core count.
+Prompt processing is limited by compute, so it keeps scaling with more threads.
+
+Results: 40 threads gave 8.55 tok/s and 48 gave 8.3. More threads were slower. The lower range peaked at 30.
+
+## 7. Check how the RAM is installed
+
+On the Proxmox host (not in the VM), as root:
+
+```bash
+./check-ram.sh
+```
+
+The script lists each DIMM slot with its size and speed, then counts the filled slots.
+Full bandwidth needs 12 DIMMs, one per channel, running at 4800 MT/s.
 
 ## Sources
 
