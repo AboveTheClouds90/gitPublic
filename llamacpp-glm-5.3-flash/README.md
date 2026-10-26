@@ -123,10 +123,11 @@ The comments at the top of `bench-ram.sh` explain how to read the Triad number.
 The biggest gain is MTP, where the model drafts the next token and checks it in the same pass (`llama-bench` can't measure it), plus `"reasoning_effort":"low"` for simple questions.
 Smaller gains: a `UD-Q3_K_XL` quant, an f16 KV cache (`-ctk f16 -ctv f16`), `--poll 100`.
 
-To turn on MTP, update llama.cpp, add `--spec-type draft-mtp` to `start-server.sh`, and compare `timings.predicted_per_second` in the reply with and without it:
+`start-server.sh` turns on MTP with `--spec-type draft-mtp` (needs llama.cpp from 2026-10-07 or later).
+To update llama.cpp, then check MTP helps, compare `timings.predicted_per_second` in the reply with and without the flag:
 
 ```bash
-cd /llama.cpp && git pull && cmake --build build --config Release -j
+cd llama.cpp && git pull && cmake --build build --config Release -j
 ```
 
 Unsloth recommends 2 draft tokens; more slow it down.
